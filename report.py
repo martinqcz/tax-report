@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from cnb_rates import convert_to_czk, get_rate
-from position_tracker import SaleRecord, OptionRecord
+from position_tracker import SaleRecord, OptionRecord, OpenOptionRecord
 
 
 @dataclass
@@ -216,14 +216,15 @@ def generate_dividend_report(dividends: list[DividendEntry], withholding_taxes: 
     print(f"  -> CSV saved: {csv_path}")
 
 
-def generate_options_report(records: list[OptionRecord], person_name: str, output_dir: str, year: int):
-    """Generate stock options profit/loss report."""
+def generate_options_report(records: list[OptionRecord], person_name: str, output_dir: str, year: int,
+                            open_positions: list[OpenOptionRecord] | None = None):
+    """Generate stock options profit/loss report including open short positions."""
     print(f"\n{'='*80}")
     print(f"  STOCK OPTIONS REPORT - {person_name} ({year})")
     print(f"{'='*80}\n")
 
-    if not records:
-        print(f"  No closed option positions in {year}.\n")
+    if not records and not open_positions:
+        print(f"  No option positions in {year}.\n")
         return
 
     rows = []
@@ -232,6 +233,7 @@ def generate_options_report(records: list[OptionRecord], person_name: str, outpu
     total_loss_czk = 0.0
     by_currency: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
+    # Closed positions
     for rec in sorted(records, key=lambda r: (r.close_date, r.symbol)):
         rate = get_rate(rec.currency, rec.close_date)
         pl_czk = rec.realized_pl * rate
@@ -257,6 +259,7 @@ def generate_options_report(records: list[OptionRecord], person_name: str, outpu
             "cnb_rate": round(rate, 4),
             "pl_czk": round(pl_czk, 2),
             "account": rec.account,
+            "status": "CLOSED",
         })
 
     header = f"  {'Symbol':<28} {'Open Date':<12} {'Close Date':<12} {'Curr':>4} {'Proceeds':>10} {'Comm':>8} {'P/L Orig':>10} {'CNB Rate':>9} {'P/L CZK':>12}"
@@ -267,6 +270,49 @@ def generate_options_report(records: list[OptionRecord], person_name: str, outpu
         print(f"  {r['symbol']:<28} {r['open_date']:<12} {r['close_date']:<12} "
               f"{r['currency']:>4} {r['proceeds']:>10.2f} {r['commission']:>8.2f} "
               f"{r['pl_orig']:>10.2f} {r['cnb_rate']:>9.4f} {r['pl_czk']:>12.2f}")
+
+    # Open short positions
+    open_rows = []
+    if open_positions:
+        open_short = [p for p in open_positions if p.quantity < 0]
+
+        if open_short:
+            print(f"\n  OPEN SHORT POSITIONS (year end)")
+            print("  " + "-" * (len(header) - 2))
+
+        for rec in sorted(open_short, key=lambda r: (r.open_date, r.symbol)):
+            rate = get_rate(rec.currency, rec.open_date)
+            pl = rec.proceeds - rec.commission
+            pl_czk = pl * rate
+            cur = rec.currency
+            label = "SHORT"
+
+            total_pl_czk += pl_czk
+            if pl >= 0:
+                total_profit_czk += pl_czk
+                by_currency[cur]["profit"] += pl
+            else:
+                total_loss_czk += pl_czk
+                by_currency[cur]["loss"] += pl
+            by_currency[cur]["net"] += pl
+
+            open_rows.append({
+                "symbol": rec.symbol,
+                "open_date": rec.open_date.isoformat(),
+                "close_date": "",
+                "currency": rec.currency,
+                "proceeds": round(rec.proceeds, 2),
+                "commission": round(rec.commission, 2),
+                "pl_orig": round(pl, 2),
+                "cnb_rate": round(rate, 4),
+                "pl_czk": round(pl_czk, 2),
+                "account": rec.account,
+                "status": f"OPEN {label}",
+            })
+
+            print(f"  {rec.symbol:<28} {rec.open_date.isoformat():<12} {'OPEN':>12} "
+                  f"{rec.currency:>4} {rec.proceeds:>10.2f} {rec.commission:>8.2f} "
+                  f"{pl:>10.2f} {rate:>9.4f} {pl_czk:>12.2f}")
 
     print(f"\n  SUMMARY")
     print(f"  {'-'*70}")
@@ -281,9 +327,10 @@ def generate_options_report(records: list[OptionRecord], person_name: str, outpu
     print()
 
     # Write CSV
+    all_rows = rows + open_rows
     csv_path = os.path.join(output_dir, f"{person_name}_options_{year}.csv")
     with open(csv_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()) if rows else [])
+        writer = csv.DictWriter(f, fieldnames=list(all_rows[0].keys()) if all_rows else [])
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(all_rows)
     print(f"  -> CSV saved: {csv_path}")

@@ -1,5 +1,6 @@
 """Position tracker with FIFO lot matching and transfer handling."""
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from collections import defaultdict
@@ -46,6 +47,18 @@ class OptionRecord:
     proceeds: float  # total proceeds from all legs
     commission: float  # total commission
     realized_pl: float
+    account: str
+
+
+@dataclass
+class OpenOptionRecord:
+    """Record of an open option position at year end."""
+    symbol: str
+    open_date: date
+    currency: str
+    proceeds: float
+    commission: float
+    quantity: float  # negative = short (sold), positive = long (bought)
     account: str
 
 
@@ -304,3 +317,36 @@ class PositionTracker:
     def get_option_records(self, year: int) -> list[OptionRecord]:
         """Get all closed option positions in the given year."""
         return [r for r in self.option_records if r.close_date.year == year]
+
+    @staticmethod
+    def _parse_option_expiry(symbol: str) -> date | None:
+        """Parse expiry date from option symbol like 'NVDA 16MAY25 115 P'."""
+        m = re.search(r"(\d{2})([A-Z]{3})(\d{2})\s", symbol)
+        if m:
+            day, mon, yr = m.groups()
+            months = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
+                       "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
+            return date(2000 + int(yr), months[mon], int(day))
+        return None
+
+    def get_open_option_positions(self, year: int) -> list[OpenOptionRecord]:
+        """Get option positions opened in the given year that are still open at year end."""
+        year_end = date(year, 12, 31)
+        records = []
+        for (account, symbol), lots in self.option_lots.items():
+            expiry = self._parse_option_expiry(symbol)
+            if expiry and expiry <= year_end:
+                continue  # already expired, skip artifacts
+            for lot in lots:
+                if lot["quantity"] != 0 and lot["date"].year == year:
+                    # Determine currency from symbol context — use USD as default for IB options
+                    records.append(OpenOptionRecord(
+                        symbol=symbol,
+                        open_date=lot["date"],
+                        currency="USD",
+                        proceeds=lot["proceeds"],
+                        commission=lot["commission"],
+                        quantity=lot["quantity"],
+                        account=account,
+                    ))
+        return records

@@ -300,7 +300,8 @@ def process_person(person_name: str, person_dir: str, year: int):
     generate_dividend_report(dividends, withholding_taxes, person_name, OUTPUT_DIR, year)
 
     option_records = tracker.get_option_records(year)
-    generate_options_report(option_records, person_name, OUTPUT_DIR, year)
+    open_options = tracker.get_open_option_positions(year)
+    generate_options_report(option_records, person_name, OUTPUT_DIR, year, open_options)
 
 
 class TeeWriter:
