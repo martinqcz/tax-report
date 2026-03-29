@@ -9,6 +9,7 @@ import sys
 
 from parsers.ib_parser import parse_ib_csv
 from parsers.fio_parser import parse_fio_csv
+from parsers.manual_parser import parse_manual_csv
 from position_tracker import PositionTracker
 from report import (
     generate_stock_sales_report,
@@ -184,6 +185,17 @@ def process_person(person_name: str, person_dir: str, year: int):
     ib_accounts = discover_ib_files(person_dir)
     fio_files = discover_fio_files(person_dir)
 
+    # --- Step 0: Load manual transactions (pre-broker data) ---
+    manual_file = os.path.join(person_dir, "manual_transactions.csv")
+    manual_txns = []
+    if os.path.exists(manual_file):
+        print(f"  Loading manual transactions: manual_transactions.csv")
+        manual_txns = parse_manual_csv(manual_file)
+        for txn in manual_txns:
+            if txn.type == "buy":
+                tracker.add_buy(txn.account, txn.symbol, txn.quantity,
+                                txn.price, txn.currency, txn.date, txn.commission)
+
     # --- Step 1: Load historical data (years before target) to build position lots ---
 
     for account_id, year_files in sorted(ib_accounts.items()):
@@ -200,15 +212,72 @@ def process_person(person_name: str, person_dir: str, year: int):
             process_fio_statement(tracker, stmt, "Fio")
 
     # --- Step 2: Process target year data ---
+    # Merge all IB events across accounts and process chronologically
+    # to ensure transfers arrive before sells in other accounts.
 
     target_ib_stmts = []
+    all_ib_events = []
     for account_id, year_files in sorted(ib_accounts.items()):
         for file_year, filepath in year_files:
             if file_year == year:
                 print(f"  Loading {year}: {os.path.basename(filepath)}")
                 stmt = parse_ib_csv(filepath)
-                process_ib_statement(tracker, stmt, account_id)
                 target_ib_stmts.append(stmt)
+
+                for trade in stmt.trades:
+                    all_ib_events.append(("trade", trade.date, trade, account_id))
+                for xfer in stmt.transfers:
+                    if xfer.direction == "Out" and xfer.quantity < 0:
+                        all_ib_events.append(("transfer", xfer.date, xfer, account_id))
+                for ca in stmt.corporate_actions:
+                    all_ib_events.append(("corporate_action", ca.date, ca, account_id))
+
+    # Add manual splits and sells into the event stream
+    for txn in manual_txns:
+        if txn.type == "split":
+            all_ib_events.append(("manual_split", txn.date, txn, txn.account))
+        elif txn.type == "sell":
+            all_ib_events.append(("manual_sell", txn.date, txn, txn.account))
+
+    # Sort with transfers before other events on the same date
+    event_priority = {"transfer": 0, "corporate_action": 1, "manual_split": 1, "trade": 2, "manual_sell": 2}
+    all_ib_events.sort(key=lambda e: (e[1], event_priority.get(e[0], 9)))
+
+    for event_type, _, event, account_id in all_ib_events:
+        if event_type == "trade":
+            trade = event
+            if trade.asset_category == "Stocks":
+                if trade.quantity > 0:
+                    tracker.add_buy(account_id, trade.symbol, trade.quantity,
+                                    trade.price, trade.currency, trade.date, trade.commission)
+                elif trade.quantity < 0:
+                    tracker.process_sell(account_id, trade.symbol, trade.quantity,
+                                         trade.price, trade.currency, trade.date, trade.commission)
+            elif trade.asset_category == "Equity and Index Options":
+                tracker.process_option_trade(
+                    account_id, trade.symbol, trade.quantity, trade.price,
+                    trade.currency, trade.date, trade.commission, trade.code,
+                    realized_pl=trade.realized_pl, proceeds=trade.proceeds)
+        elif event_type == "transfer":
+            xfer = event
+            to_account = xfer.from_account
+            if xfer.asset_category == "Stocks":
+                tracker.transfer(account_id, to_account, xfer.symbol,
+                                 abs(xfer.quantity), xfer.date)
+            elif xfer.asset_category == "Equity and Index Options":
+                tracker.transfer_options(account_id, to_account, xfer.symbol,
+                                          abs(xfer.quantity), xfer.date)
+        elif event_type == "corporate_action":
+            ca = event
+            if ca.action_type == "split":
+                tracker.process_split(account_id, ca.symbol, ca.quantity, ca.split_ratio)
+        elif event_type == "manual_split":
+            txn = event
+            tracker.process_split(txn.account, txn.symbol, txn.quantity, None)
+        elif event_type == "manual_sell":
+            txn = event
+            tracker.process_sell(txn.account, txn.symbol, -txn.quantity,
+                                 txn.price, txn.currency, txn.date, txn.commission)
 
     target_fio_stmts = []
     for file_year, filepath in fio_files:
