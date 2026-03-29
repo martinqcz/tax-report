@@ -69,6 +69,7 @@ def generate_stock_sales_report(sales: list[SaleRecord], person_name: str, outpu
                 by_currency[cur]["taxable_loss"] += sale.profit_loss
 
         status = "EXEMPT" if sale.tax_exempt else "TAXABLE"
+        total_comm = sale.sell_commission + sale.buy_commission_per_share * sale.sell_quantity
         rows.append({
             "symbol": sale.symbol,
             "qty": sale.sell_quantity,
@@ -77,6 +78,7 @@ def generate_stock_sales_report(sales: list[SaleRecord], person_name: str, outpu
             "buy_price": sale.buy_price,
             "sell_price": sale.sell_price,
             "currency": sale.sell_currency,
+            "comm_fee": round(total_comm, 2),
             "pl_orig": round(sale.profit_loss, 2),
             "cnb_rate": round(rate, 4),
             "pl_czk": round(pl_czk, 2),
@@ -85,14 +87,14 @@ def generate_stock_sales_report(sales: list[SaleRecord], person_name: str, outpu
         })
 
     # Print table
-    header = f"  {'Symbol':<10} {'Qty':>6} {'Buy Date':<12} {'Sell Date':<12} {'Buy Price':>10} {'Sell Price':>10} {'Curr':>4} {'P/L Orig':>10} {'CNB Rate':>9} {'P/L CZK':>12} {'Days':>5} {'Status':<8}"
+    header = f"  {'Symbol':<10} {'Qty':>6} {'Buy Date':<12} {'Sell Date':<12} {'Buy Price':>10} {'Sell Price':>10} {'Curr':>4} {'Comm/Fee':>9} {'P/L Orig':>10} {'CNB Rate':>9} {'P/L CZK':>12} {'Days':>5} {'Status':<8}"
     print(header)
     print("  " + "-" * (len(header) - 2))
 
     for r in rows:
         print(f"  {r['symbol']:<10} {r['qty']:>6.0f} {r['buy_date']:<12} {r['sell_date']:<12} "
               f"{r['buy_price']:>10.2f} {r['sell_price']:>10.2f} {r['currency']:>4} "
-              f"{r['pl_orig']:>10.2f} {r['cnb_rate']:>9.4f} {r['pl_czk']:>12.2f} "
+              f"{r['comm_fee']:>9.2f} {r['pl_orig']:>10.2f} {r['cnb_rate']:>9.4f} {r['pl_czk']:>12.2f} "
               f"{r['holding_days']:>5} {r['status']:<8}")
 
     print(f"\n  SUMMARY")
