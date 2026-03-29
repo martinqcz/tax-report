@@ -147,7 +147,8 @@ class PositionTracker:
                 lots.pop(0)
 
         if remaining > 0.001:
-            # No matching lots found - create a synthetic lot (pre-2021 purchase)
+            print(f"  ⚠ MISSING BUY: {symbol} {remaining:.0f} shares sold {sell_date} "
+                  f"@ {sell_price} {currency} in {account} — no matching purchase found")
             self.sales.append(SaleRecord(
                 symbol=symbol,
                 sell_date=sell_date,

@@ -200,6 +200,10 @@ def parse_fio_csv(filepath: str) -> FioStatement:
             ))
 
         elif direction in ("N\xe1kup", "Nákup", "Prodej", "N kup"):
+            # Skip ticker changes (e.g., "Ticker Change: FB => META")
+            if "Ticker Change" in text:
+                continue
+
             # Check for stock split first (recorded as Nákup with price=0 and "Split" in text)
             if "Split" in text or "split" in text:
                 quantity = _parse_fio_number(quantity_str)
