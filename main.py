@@ -133,26 +133,60 @@ def collect_dividends_and_taxes(ib_stmts, fio_stmts, year: int):
     return dividends, withholding_taxes
 
 
-def discover_ib_files(person_dir: str) -> dict[str, list[tuple[int, str]]]:
-    """Discover IB CSV files grouped by account, sorted by year.
+def discover_ib_files(person_dir: str) -> dict[str, list[tuple[int, list[str]]]]:
+    """Discover IB CSV files grouped by account and year, sorted by year.
 
-    Returns: {account_id: [(year, filepath), ...]}
+    Supports annual statements (U1234567_2025_2025.csv),
+    daily statements (U1234567_20250315.csv), and custom date range
+    statements (U1234567_20251201_20251231.csv). Multiple files for
+    the same account+year are grouped together for dedup merging.
+
+    Returns: {account_id: [(year, [filepath, ...]), ...]}
     """
-    accounts: dict[str, list[tuple[int, str]]] = {}
-    pattern = os.path.join(person_dir, "U*_*_*.csv")
+    # Collect all files per (account, year)
+    by_account_year: dict[tuple[str, int], list[str]] = {}
+    pattern = os.path.join(person_dir, "U*_*.csv")
     for filepath in glob.glob(pattern):
         basename = os.path.basename(filepath)
-        # Format: U1234567_2025_2025.csv
+        # Annual format: U1234567_2025_2025.csv
         match = re.match(r"(U\d+)_(\d{4})_(\d{4})\.csv", basename)
         if match:
             account_id = match.group(1)
             year = int(match.group(2))
-            accounts.setdefault(account_id, []).append((year, filepath))
+            by_account_year.setdefault((account_id, year), []).append(filepath)
+            continue
+        # Custom date range: U1234567_20251201_20251231.csv
+        match = re.match(r"(U\d+)_(\d{4})\d{4}_\d{8}\.csv", basename)
+        if match:
+            account_id = match.group(1)
+            year = int(match.group(2))
+            by_account_year.setdefault((account_id, year), []).append(filepath)
+            continue
+        # Daily format: U1234567_20250315.csv
+        match = re.match(r"(U\d+)_(\d{4})\d{4}\.csv", basename)
+        if match:
+            account_id = match.group(1)
+            year = int(match.group(2))
+            by_account_year.setdefault((account_id, year), []).append(filepath)
+
+    # Group by account, sorted by year
+    accounts: dict[str, list[tuple[int, list[str]]]] = {}
+    for (account_id, year), filepaths in sorted(by_account_year.items()):
+        accounts.setdefault(account_id, []).append((year, sorted(filepaths)))
 
     for account_id in accounts:
         accounts[account_id].sort(key=lambda x: x[0])
 
     return accounts
+
+
+def load_ib_statement(filepaths: list[str]) -> "IBStatement":
+    """Load and merge one or more IB CSV files into a single statement."""
+    stmt = parse_ib_csv(filepaths[0])
+    for filepath in filepaths[1:]:
+        other = parse_ib_csv(filepath)
+        stmt.merge(other)
+    return stmt
 
 
 def discover_fio_files(person_dir: str) -> list[tuple[int, str]]:
@@ -199,10 +233,11 @@ def process_person(person_name: str, person_dir: str, year: int):
     # --- Step 1: Load historical data (years before target) to build position lots ---
 
     for account_id, year_files in sorted(ib_accounts.items()):
-        for file_year, filepath in year_files:
+        for file_year, filepaths in year_files:
             if file_year < year:
-                print(f"  Loading historical: {os.path.basename(filepath)}")
-                stmt = parse_ib_csv(filepath)
+                names = ", ".join(os.path.basename(f) for f in filepaths)
+                print(f"  Loading historical: {names}")
+                stmt = load_ib_statement(filepaths)
                 process_ib_statement(tracker, stmt, account_id)
 
     for file_year, filepath in fio_files:
@@ -218,10 +253,11 @@ def process_person(person_name: str, person_dir: str, year: int):
     target_ib_stmts = []
     all_ib_events = []
     for account_id, year_files in sorted(ib_accounts.items()):
-        for file_year, filepath in year_files:
+        for file_year, filepaths in year_files:
             if file_year == year:
-                print(f"  Loading {year}: {os.path.basename(filepath)}")
-                stmt = parse_ib_csv(filepath)
+                names = ", ".join(os.path.basename(f) for f in filepaths)
+                print(f"  Loading {year}: {names}")
+                stmt = load_ib_statement(filepaths)
                 target_ib_stmts.append(stmt)
 
                 for trade in stmt.trades:

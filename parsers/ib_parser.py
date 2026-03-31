@@ -75,6 +75,43 @@ class IBStatement:
     transfers: list[Transfer] = field(default_factory=list)
     corporate_actions: list[CorporateAction] = field(default_factory=list)
 
+    def merge(self, other: "IBStatement") -> None:
+        """Merge another statement into this one, skipping duplicate entries."""
+        trade_keys = {(t.symbol, t.date, t.quantity, t.price, t.asset_category, t.code) for t in self.trades}
+        for t in other.trades:
+            key = (t.symbol, t.date, t.quantity, t.price, t.asset_category, t.code)
+            if key not in trade_keys:
+                self.trades.append(t)
+                trade_keys.add(key)
+
+        div_keys = {(d.symbol, d.date, d.amount, d.currency) for d in self.dividends}
+        for d in other.dividends:
+            key = (d.symbol, d.date, d.amount, d.currency)
+            if key not in div_keys:
+                self.dividends.append(d)
+                div_keys.add(key)
+
+        wht_keys = {(w.symbol, w.date, w.amount, w.currency) for w in self.withholding_taxes}
+        for w in other.withholding_taxes:
+            key = (w.symbol, w.date, w.amount, w.currency)
+            if key not in wht_keys:
+                self.withholding_taxes.append(w)
+                wht_keys.add(key)
+
+        xfer_keys = {(x.symbol, x.date, x.quantity, x.direction) for x in self.transfers}
+        for x in other.transfers:
+            key = (x.symbol, x.date, x.quantity, x.direction)
+            if key not in xfer_keys:
+                self.transfers.append(x)
+                xfer_keys.add(key)
+
+        ca_keys = {(c.symbol, c.date, c.quantity, c.action_type) for c in self.corporate_actions}
+        for c in other.corporate_actions:
+            key = (c.symbol, c.date, c.quantity, c.action_type)
+            if key not in ca_keys:
+                self.corporate_actions.append(c)
+                ca_keys.add(key)
+
 
 def _parse_date(date_str: str) -> date:
     """Parse IB date format like '2025-06-20, 13:22:48' or '2025-06-20'."""
