@@ -11,6 +11,7 @@ from parsers.ib_parser import parse_ib_csv
 from parsers.fio_parser import parse_fio_csv
 from parsers.manual_parser import parse_manual_csv
 from position_tracker import PositionTracker
+from cnb_rates import enable_yearly_rate_mode
 from report import (
     generate_stock_sales_report,
     generate_dividend_report,
@@ -358,14 +359,21 @@ class TeeWriter:
 def main():
     parser = argparse.ArgumentParser(
         description="Czech tax report generator",
-        usage="%(prog)s <year>\n\n  Example: python3 main.py 2025",
+        usage="%(prog)s <year> [--yearly-rate]\n\n  Examples:\n    python3 main.py 2025\n    python3 main.py 2025 --yearly-rate",
     )
     parser.add_argument("year", type=int,
                         help="Calendar year to generate the report for (e.g. 2025)")
+    parser.add_argument("--yearly-rate", action="store_true",
+                        help="Use 'Jednotný kurz' (unified yearly rate from MF ČR) instead of daily CNB rates")
     args = parser.parse_args()
     year = args.year
 
-    print(f"\n  TAX REPORT GENERATOR {year}")
+    if args.yearly_rate:
+        print(f"\n  Fetching Jednotný kurz (unified yearly rate) for {year}...")
+        enable_yearly_rate_mode(year)
+
+    rate_label = "jednotný kurz" if args.yearly_rate else "daily CNB"
+    print(f"\n  TAX REPORT GENERATOR {year} (exchange rates: {rate_label})")
     print("  " + "=" * 40)
 
     # Process each person directory found in data/
