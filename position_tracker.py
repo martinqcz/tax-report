@@ -44,8 +44,9 @@ class OptionRecord:
     open_date: date
     close_date: date
     currency: str
-    proceeds: float  # total proceeds from all legs
-    commission: float  # total commission
+    recv_orig: float
+    paid_orig: float
+    commission: float
     realized_pl: float
     account: str
 
@@ -56,7 +57,8 @@ class OpenOptionRecord:
     symbol: str
     open_date: date
     currency: str
-    proceeds: float
+    recv_orig: float
+    paid_orig: float
     commission: float
     quantity: float  # negative = short (sold), positive = long (bought)
     account: str
@@ -263,16 +265,23 @@ class PositionTracker:
                 remaining -= matched
 
             total_commission = abs(commission) + total_open_commission
-            total_proceeds = proceeds + total_open_proceeds
+            
+            # Recv is sum of all positive proceeds, Paid is sum of absolute negative proceeds (COMMISSION EXCLUDED)
+            recv_orig = (proceeds if proceeds > 0 else 0) + (total_open_proceeds if total_open_proceeds > 0 else 0)
+            paid_orig = (abs(proceeds) if proceeds < 0 else 0) + (abs(total_open_proceeds) if total_open_proceeds < 0 else 0)
+            
+            # Ensure consistency: P/L = Recv - Paid - Comm
+            calculated_pl = recv_orig - paid_orig - total_commission
 
             self.option_records.append(OptionRecord(
                 symbol=symbol,
                 open_date=earliest_open_date,
                 close_date=trade_date,
                 currency=currency,
-                proceeds=total_proceeds,
+                recv_orig=recv_orig,
+                paid_orig=paid_orig,
                 commission=total_commission,
-                realized_pl=realized_pl,
+                realized_pl=calculated_pl,
                 account=account,
             ))
 
@@ -340,11 +349,15 @@ class PositionTracker:
             for lot in lots:
                 if lot["quantity"] != 0 and lot["date"].year == year:
                     # Determine currency from symbol context — use USD as default for IB options
+                    # For open short, proceeds is positive premium. For open long, it's negative cost.
+                    recv_orig = lot["proceeds"] if lot["proceeds"] > 0 else 0
+                    paid_orig = abs(lot["proceeds"]) if lot["proceeds"] < 0 else 0
                     records.append(OpenOptionRecord(
                         symbol=symbol,
                         open_date=lot["date"],
                         currency="USD",
-                        proceeds=lot["proceeds"],
+                        recv_orig=recv_orig,
+                        paid_orig=paid_orig,
                         commission=lot["commission"],
                         quantity=lot["quantity"],
                         account=account,

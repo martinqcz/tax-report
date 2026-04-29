@@ -42,9 +42,11 @@ def generate_stock_sales_report(sales: list[SaleRecord], person_name: str, outpu
 
     taxable_profit_czk = 0.0
     taxable_loss_czk = 0.0
+    taxable_recv_czk = 0.0
+    taxable_paid_czk = 0.0
     exempt_profit_czk = 0.0
     exempt_loss_czk = 0.0
-    # Per-currency sums: {currency: {taxable_profit, taxable_loss, exempt_profit, exempt_loss}}
+    # Per-currency sums: {currency: {taxable_profit, taxable_loss, taxable_recv, taxable_paid, exempt_profit, exempt_loss}}
     by_currency: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     rows = []
@@ -52,6 +54,15 @@ def generate_stock_sales_report(sales: list[SaleRecord], person_name: str, outpu
         rate = get_rate(sale.sell_currency, sale.sell_date)
         pl_czk = sale.profit_loss * rate
         cur = sale.sell_currency
+
+        status = "EXEMPT" if sale.tax_exempt else "TAXABLE"
+        total_comm = sale.sell_commission + sale.buy_commission_per_share * sale.sell_quantity
+
+        recv_orig = sale.sell_price * sale.sell_quantity
+        paid_orig = sale.buy_price * sale.sell_quantity
+
+        recv_czk = recv_orig * rate
+        paid_czk = paid_orig * rate
 
         if sale.tax_exempt:
             if sale.profit_loss >= 0:
@@ -61,6 +72,10 @@ def generate_stock_sales_report(sales: list[SaleRecord], person_name: str, outpu
                 exempt_loss_czk += pl_czk
                 by_currency[cur]["exempt_loss"] += sale.profit_loss
         else:
+            taxable_recv_czk += recv_czk
+            taxable_paid_czk += paid_czk
+            by_currency[cur]["taxable_recv"] += recv_orig
+            by_currency[cur]["taxable_paid"] += paid_orig
             if sale.profit_loss >= 0:
                 taxable_profit_czk += pl_czk
                 by_currency[cur]["taxable_profit"] += sale.profit_loss
@@ -68,8 +83,6 @@ def generate_stock_sales_report(sales: list[SaleRecord], person_name: str, outpu
                 taxable_loss_czk += pl_czk
                 by_currency[cur]["taxable_loss"] += sale.profit_loss
 
-        status = "EXEMPT" if sale.tax_exempt else "TAXABLE"
-        total_comm = sale.sell_commission + sale.buy_commission_per_share * sale.sell_quantity
         rows.append({
             "symbol": sale.symbol,
             "qty": sale.sell_quantity,
@@ -79,6 +92,8 @@ def generate_stock_sales_report(sales: list[SaleRecord], person_name: str, outpu
             "sell_price": sale.sell_price,
             "currency": sale.sell_currency,
             "comm_fee": round(total_comm, 2),
+            "paid_orig": round(paid_orig, 2),
+            "recv_orig": round(recv_orig, 2),
             "pl_orig": round(sale.profit_loss, 2),
             "cnb_rate": round(rate, 4),
             "pl_czk": round(pl_czk, 2),
@@ -87,29 +102,33 @@ def generate_stock_sales_report(sales: list[SaleRecord], person_name: str, outpu
         })
 
     # Print table
-    header = f"  {'Symbol':<10} {'Qty':>6} {'Buy Date':<12} {'Sell Date':<12} {'Buy Price':>10} {'Sell Price':>10} {'Curr':>4} {'Comm/Fee':>9} {'P/L Orig':>10} {'CNB Rate':>9} {'P/L CZK':>12} {'Days':>5} {'Status':<8}"
+    header = f"  {'Symbol':<10} {'Qty':>6} {'Buy Date':<12} {'Sell Date':<12} {'Buy Price':>10} {'Sell Price':>10} {'Curr':>4} {'Paid Orig':>12} {'Recv Orig':>12} {'P/L Orig':>10} {'P/L CZK':>12} {'Days':>5} {'Status':<8}"
     print(header)
     print("  " + "-" * (len(header) - 2))
 
     for r in rows:
         print(f"  {r['symbol']:<10} {r['qty']:>6.0f} {r['buy_date']:<12} {r['sell_date']:<12} "
               f"{r['buy_price']:>10.2f} {r['sell_price']:>10.2f} {r['currency']:>4} "
-              f"{r['comm_fee']:>9.2f} {r['pl_orig']:>10.2f} {r['cnb_rate']:>9.4f} {r['pl_czk']:>12.2f} "
+              f"{r['paid_orig']:>12.2f} {r['recv_orig']:>12.2f} {r['pl_orig']:>10.2f} {r['pl_czk']:>12.2f} "
               f"{r['holding_days']:>5} {r['status']:<8}")
 
     print(f"\n  SUMMARY")
     print(f"  {'-'*70}")
     print(f"  {'':18} {'CZK':>14}   {'Original currencies':}")
     print(f"  {'-'*70}")
+    orig_taxable_recv = "  ".join(f"{v['taxable_recv']:>11.2f} {c}" for c, v in sorted(by_currency.items()) if v["taxable_recv"] != 0)
+    orig_taxable_paid = "  ".join(f"{v['taxable_paid']:>11.2f} {c}" for c, v in sorted(by_currency.items()) if v["taxable_paid"] != 0)
     orig_taxable_profit = "  ".join(f"{v['taxable_profit']:>11.2f} {c}" for c, v in sorted(by_currency.items()) if v["taxable_profit"] != 0)
     orig_taxable_loss = "  ".join(f"{v['taxable_loss']:>11.2f} {c}" for c, v in sorted(by_currency.items()) if v["taxable_loss"] != 0)
     orig_exempt_profit = "  ".join(f"{v['exempt_profit']:>11.2f} {c}" for c, v in sorted(by_currency.items()) if v["exempt_profit"] != 0)
     orig_exempt_loss = "  ".join(f"{v['exempt_loss']:>11.2f} {c}" for c, v in sorted(by_currency.items()) if v["exempt_loss"] != 0)
-    print(f"  Taxable profit:    {taxable_profit_czk:>14.2f}   {orig_taxable_profit}")
-    print(f"  Taxable loss:      {taxable_loss_czk:>14.2f}   {orig_taxable_loss}")
-    print(f"  Net taxable P/L:   {taxable_profit_czk + taxable_loss_czk:>14.2f}")
-    print(f"  Tax-exempt profit: {exempt_profit_czk:>14.2f}   {orig_exempt_profit}")
-    print(f"  Tax-exempt loss:   {exempt_loss_czk:>14.2f}   {orig_exempt_loss}")
+    print(f"  Taxable total received: {taxable_recv_czk:>11.2f}   {orig_taxable_recv}")
+    print(f"  Taxable total paid:     {taxable_paid_czk:>11.2f}   {orig_taxable_paid}")
+    print(f"  Taxable profit:      {taxable_profit_czk:>14.2f}   {orig_taxable_profit}")
+    print(f"  Taxable loss:        {taxable_loss_czk:>14.2f}   {orig_taxable_loss}")
+    print(f"  Net taxable P/L:     {taxable_profit_czk + taxable_loss_czk:>14.2f}")
+    print(f"  Tax-exempt profit:   {exempt_profit_czk:>14.2f}   {orig_exempt_profit}")
+    print(f"  Tax-exempt loss:     {exempt_loss_czk:>14.2f}   {orig_exempt_loss}")
     print()
 
     # Write CSV
@@ -231,15 +250,25 @@ def generate_options_report(records: list[OptionRecord], person_name: str, outpu
     total_pl_czk = 0.0
     total_profit_czk = 0.0
     total_loss_czk = 0.0
+    total_recv_czk = 0.0
+    total_paid_czk = 0.0
+    total_comm_czk = 0.0
     by_currency: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
 
     # Closed positions
     for rec in sorted(records, key=lambda r: (r.close_date, r.symbol)):
         rate = get_rate(rec.currency, rec.close_date)
         pl_czk = rec.realized_pl * rate
+        recv_czk = rec.recv_orig * rate
+        paid_czk = rec.paid_orig * rate
+        comm_czk = rec.commission * rate
         cur = rec.currency
 
         total_pl_czk += pl_czk
+        total_recv_czk += recv_czk
+        total_paid_czk += paid_czk
+        total_comm_czk += comm_czk
+
         if rec.realized_pl >= 0:
             total_profit_czk += pl_czk
             by_currency[cur]["profit"] += rec.realized_pl
@@ -247,14 +276,18 @@ def generate_options_report(records: list[OptionRecord], person_name: str, outpu
             total_loss_czk += pl_czk
             by_currency[cur]["loss"] += rec.realized_pl
         by_currency[cur]["net"] += rec.realized_pl
+        by_currency[cur]["recv"] += rec.recv_orig
+        by_currency[cur]["paid"] += rec.paid_orig
+        by_currency[cur]["comm"] += rec.commission
 
         rows.append({
             "symbol": rec.symbol,
             "open_date": rec.open_date.isoformat(),
             "close_date": rec.close_date.isoformat(),
             "currency": rec.currency,
-            "proceeds": round(rec.proceeds, 2),
-            "commission": round(rec.commission, 2),
+            "paid_orig": round(rec.paid_orig, 2),
+            "recv_orig": round(rec.recv_orig, 2),
+            "comm": round(rec.commission, 2),
             "pl_orig": round(rec.realized_pl, 2),
             "cnb_rate": round(rate, 4),
             "pl_czk": round(pl_czk, 2),
@@ -262,14 +295,14 @@ def generate_options_report(records: list[OptionRecord], person_name: str, outpu
             "status": "CLOSED",
         })
 
-    header = f"  {'Symbol':<28} {'Open Date':<12} {'Close Date':<12} {'Curr':>4} {'Proceeds':>10} {'Comm':>8} {'P/L Orig':>10} {'CNB Rate':>9} {'P/L CZK':>12}"
+    header = f"  {'Symbol':<28} {'Open Date':<12} {'Close Date':<12} {'Curr':>4} {'Paid Orig':>10} {'Recv Orig':>10} {'Comm':>8} {'P/L Orig':>10} {'CNB Rate':>9} {'P/L CZK':>12}"
     print(header)
     print("  " + "-" * (len(header) - 2))
 
     for r in rows:
         print(f"  {r['symbol']:<28} {r['open_date']:<12} {r['close_date']:<12} "
-              f"{r['currency']:>4} {r['proceeds']:>10.2f} {r['commission']:>8.2f} "
-              f"{r['pl_orig']:>10.2f} {r['cnb_rate']:>9.4f} {r['pl_czk']:>12.2f}")
+              f"{r['currency']:>4} {r['paid_orig']:>10.2f} {r['recv_orig']:>10.2f} "
+              f"{r['comm']:>8.2f} {r['pl_orig']:>10.2f} {r['cnb_rate']:>9.4f} {r['pl_czk']:>12.2f}")
 
     # Open short positions
     open_rows = []
@@ -282,12 +315,19 @@ def generate_options_report(records: list[OptionRecord], person_name: str, outpu
 
         for rec in sorted(open_short, key=lambda r: (r.open_date, r.symbol)):
             rate = get_rate(rec.currency, rec.open_date)
-            pl = rec.proceeds - rec.commission
+            pl = rec.recv_orig - rec.paid_orig - rec.commission # realized part for short open is the premium minus commission
             pl_czk = pl * rate
+            recv_czk = rec.recv_orig * rate
+            paid_czk = rec.paid_orig * rate
+            comm_czk = rec.commission * rate
             cur = rec.currency
             label = "SHORT"
 
             total_pl_czk += pl_czk
+            total_recv_czk += recv_czk
+            total_paid_czk += paid_czk
+            total_comm_czk += comm_czk
+
             if pl >= 0:
                 total_profit_czk += pl_czk
                 by_currency[cur]["profit"] += pl
@@ -295,14 +335,18 @@ def generate_options_report(records: list[OptionRecord], person_name: str, outpu
                 total_loss_czk += pl_czk
                 by_currency[cur]["loss"] += pl
             by_currency[cur]["net"] += pl
+            by_currency[cur]["recv"] += rec.recv_orig
+            by_currency[cur]["paid"] += rec.paid_orig
+            by_currency[cur]["comm"] += rec.commission
 
             open_rows.append({
                 "symbol": rec.symbol,
                 "open_date": rec.open_date.isoformat(),
                 "close_date": "",
                 "currency": rec.currency,
-                "proceeds": round(rec.proceeds, 2),
-                "commission": round(rec.commission, 2),
+                "paid_orig": round(rec.paid_orig, 2),
+                "recv_orig": round(rec.recv_orig, 2),
+                "comm": round(rec.commission, 2),
                 "pl_orig": round(pl, 2),
                 "cnb_rate": round(rate, 4),
                 "pl_czk": round(pl_czk, 2),
@@ -311,19 +355,25 @@ def generate_options_report(records: list[OptionRecord], person_name: str, outpu
             })
 
             print(f"  {rec.symbol:<28} {rec.open_date.isoformat():<12} {'OPEN':>12} "
-                  f"{rec.currency:>4} {rec.proceeds:>10.2f} {rec.commission:>8.2f} "
-                  f"{pl:>10.2f} {rate:>9.4f} {pl_czk:>12.2f}")
+                  f"{rec.currency:>4} {rec.paid_orig:>10.2f} {rec.recv_orig:>10.2f} "
+                  f"{rec.comm:>8.2f} {pl:>10.2f} {rate:>9.4f} {pl_czk:>12.2f}")
 
     print(f"\n  SUMMARY")
     print(f"  {'-'*70}")
     print(f"  {'':18} {'CZK':>14}   {'Original currencies':}")
     print(f"  {'-'*70}")
+    orig_recv = "  ".join(f"{v['recv']:11.2f} {c}" for c, v in sorted(by_currency.items()) if v["recv"] != 0)
+    orig_paid = "  ".join(f"{v['paid']:11.2f} {c}" for c, v in sorted(by_currency.items()) if v["paid"] != 0)
+    orig_comm = "  ".join(f"{v['comm']:11.2f} {c}" for c, v in sorted(by_currency.items()) if v["comm"] != 0)
     orig_profit = "  ".join(f"{v['profit']:11.2f} {c}" for c, v in sorted(by_currency.items()) if v["profit"] != 0)
     orig_loss = "  ".join(f"{v['loss']:11.2f} {c}" for c, v in sorted(by_currency.items()) if v["loss"] != 0)
     orig_net = "  ".join(f"{v['net']:11.2f} {c}" for c, v in sorted(by_currency.items()) if v["net"] != 0)
-    print(f"  Option profit:     {total_profit_czk:>14.2f}   {orig_profit}")
-    print(f"  Option loss:       {total_loss_czk:>14.2f}   {orig_loss}")
-    print(f"  Net option P/L:    {total_pl_czk:>14.2f}   {orig_net}")
+    print(f"  Option total received: {total_recv_czk:>14.2f}   {orig_recv}")
+    print(f"  Option total paid:     {total_paid_czk:>14.2f}   {orig_paid}")
+    print(f"  Option total comm:     {total_comm_czk:>14.2f}   {orig_comm}")
+    print(f"  Option profit:         {total_profit_czk:>14.2f}   {orig_profit}")
+    print(f"  Option loss:           {total_loss_czk:>14.2f}   {orig_loss}")
+    print(f"  Net option P/L:        {total_pl_czk:>14.2f}   {orig_net}")
     print()
 
     # Write CSV
