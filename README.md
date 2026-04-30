@@ -6,11 +6,11 @@ A Python tool that generates Czech tax reports from Interactive Brokers (includi
 
 The tool processes broker CSV statements and produces three reports per person:
 
-**1. Stock Sales Report** - Lists all sold stock positions with purchase date, sale date, profit/loss in original currency and CZK. Applies the Czech **3-year holding exemption** (positions held longer than 3 years are tax-exempt). Uses FIFO lot matching.
+**1. Stock Sales Report** - Lists all sold stock positions with purchase date, sale date, total sum paid (including commissions), total sum received, and profit/loss. Amounts are shown in original currency and converted to CZK. Applies the Czech **3-year holding exemption** (positions held longer than 3 years are tax-exempt). Uses FIFO lot matching.
 
 **2. Dividend Report** - Summarizes dividends received and withholding tax already paid, grouped by country of origin. Useful for filling out the Czech tax return and claiming foreign tax credits.
 
-**3. Stock Options Report** - Lists all closed option positions with realized profit/loss in original currency and CZK.
+**3. Stock Options Report** - Lists all closed option positions with total sum paid (including commissions), total sum received, and realized profit/loss in original currency and CZK.
 
 All amounts are converted to CZK using the Czech National Bank (CNB) daily exchange rate for the transaction date.
 
